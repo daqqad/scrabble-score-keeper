@@ -1,9 +1,30 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import './App.css';
 
 const MAX_PLAYERS = 6;
 
-function Setup({ onStart }) {
+const LETTER_VALUES = {
+  A:1,B:3,C:3,D:2,E:1,F:4,G:2,H:4,I:1,J:8,K:5,L:1,M:3,
+  N:1,O:1,P:3,Q:10,R:1,S:1,T:1,U:1,V:4,W:4,X:8,Y:4,Z:10,
+};
+
+// mult: 1=normal, 2=DL, 3=TL, 0=blank
+function nextMult(m) { return m === 1 ? 2 : m === 2 ? 3 : m === 3 ? 0 : 1; }
+
+function letterScore(ch, mult) {
+  if (mult === 0) return 0;
+  return (LETTER_VALUES[ch.toUpperCase()] ?? 0) * mult;
+}
+
+function calcScore(word, mults, wordMult, bingo) {
+  const letters = word.toUpperCase().split('');
+  const base = letters.reduce((sum, ch, i) => sum + letterScore(ch, mults[i] ?? 1), 0);
+  return base * wordMult + (bingo ? 50 : 0);
+}
+
+// ── Setup ──────────────────────────────────────────────────────────────────
+
+function Setup({ onStart, wordSetReady }) {
   const [names, setNames] = useState(['', '']);
 
   const setName = (i, val) => setNames(n => n.map((x, j) => j === i ? val : x));
@@ -37,145 +58,229 @@ function Setup({ onStart }) {
         <button className="add-player-btn" onClick={addPlayer}>+ Add Player</button>
       )}
       <button className="start-btn" disabled={!valid} onClick={() => onStart(names.map(n => n.trim()))}>
-        Start Game
+        {wordSetReady ? 'Start Game' : 'Loading dictionary…'}
       </button>
+      {!wordSetReady && <p className="dict-loading-hint">Loading word list in the background…</p>}
     </div>
   );
 }
 
-function ScoreInput({ players, onSubmit, onCancel, editingRound }) {
-  const [scores, setScores] = useState(() => players.map(() => ''));
+// ── Tile ───────────────────────────────────────────────────────────────────
 
-  const setScore = (i, val) => {
-    if (val === '' || val === '-' || /^-?\d*$/.test(val)) {
-      setScores(s => s.map((x, j) => j === i ? val : x));
-    }
-  };
+function Tile({ letter, mult, onClick }) {
+  const raw = LETTER_VALUES[letter.toUpperCase()] ?? 0;
+  const multClass = mult === 0 ? 'tile-blank' : mult === 2 ? 'tile-dl' : mult === 3 ? 'tile-tl' : 'tile-normal';
+  const badge = mult === 0 ? 'BL' : mult === 2 ? 'DL' : mult === 3 ? 'TL' : null;
 
-  const allFilled = scores.every(s => s !== '' && s !== '-');
+  return (
+    <button className={`tile ${multClass}`} onClick={onClick} title="Tap to cycle: ×1 → DL → TL → Blank">
+      {badge && <span className="tile-badge">{badge}</span>}
+      <span className="tile-letter">{letter.toUpperCase()}</span>
+      <span className="tile-value">{raw}</span>
+    </button>
+  );
+}
 
-  const handleSubmit = () => {
-    if (!allFilled) return;
-    onSubmit(scores.map(Number));
+// ── TurnEntry modal ────────────────────────────────────────────────────────
+
+function TurnEntry({ playerName, wordSet, onAdd, onCancel }) {
+  const [word, setWord] = useState('');
+  const [mults, setMults] = useState([]);
+  const [wordMult, setWordMult] = useState(1);
+  const [bingo, setBingo] = useState(false);
+
+  const letters = word.toUpperCase().replace(/[^A-Z]/g, '').split('').filter(Boolean);
+
+  useEffect(() => {
+    setMults(prev => {
+      const next = prev.slice(0, letters.length);
+      while (next.length < letters.length) next.push(1);
+      return next;
+    });
+  }, [letters.length]);
+
+  const cycleMult = (i) => setMults(prev => prev.map((m, j) => j === i ? nextMult(m) : m));
+
+  const useBingo = bingo && letters.length >= 7;
+  const score = letters.length > 0 ? calcScore(letters.join(''), mults, wordMult, useBingo) : 0;
+
+  const inDict = wordSet ? wordSet.has(letters.join('').toLowerCase()) : null;
+  // inDict: true=valid, false=not found, null=not ready
+
+  const canAdd = letters.length >= 1;
+
+  const submit = (force = false) => {
+    if (!canAdd) return;
+    onAdd({
+      word: letters.join(''),
+      mults: [...mults],
+      wordMult,
+      bingo: useBingo,
+      score,
+      dictValid: inDict === true || force,
+    });
   };
 
   return (
-    <div className="score-input-overlay">
-      <div className="score-input-card">
-        <h2>{editingRound != null ? `Edit Round ${editingRound + 1}` : 'Enter Scores'}</h2>
-        {players.map((p, i) => (
-          <div key={i} className="score-row">
-            <label>{p}</label>
-            <input
-              type="number"
-              value={scores[i]}
-              onChange={e => setScore(i, e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && allFilled && handleSubmit()}
-              autoFocus={i === 0}
-            />
+    <div className="overlay" onClick={e => e.target === e.currentTarget && onCancel()}>
+      <div className="modal">
+        <h2 className="modal-title">{playerName}'s turn</h2>
+
+        <input
+          className="word-input"
+          type="text"
+          placeholder="Type word played…"
+          value={word}
+          onChange={e => setWord(e.target.value.replace(/[^a-zA-Z]/g, ''))}
+          autoFocus
+          spellCheck={false}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="characters"
+        />
+
+        {letters.length > 0 && (
+          <div className="tiles-row">
+            {letters.map((ch, i) => (
+              <Tile key={i} letter={ch} mult={mults[i] ?? 1} onClick={() => cycleMult(i)} />
+            ))}
           </div>
-        ))}
-        <div className="score-input-actions">
+        )}
+
+        {letters.length > 0 && (
+          <div className="mult-controls">
+            <div className="mult-group">
+              <span className="mult-label">Word:</span>
+              {[1, 2, 3].map(m => (
+                <button
+                  key={m}
+                  className={`word-mult-btn ${wordMult === m ? 'active' : ''}`}
+                  onClick={() => setWordMult(m)}
+                >
+                  {m === 1 ? '×1' : m === 2 ? 'DW' : 'TW'}
+                </button>
+              ))}
+            </div>
+            {letters.length >= 7 && (
+              <label className="bingo-label">
+                <input type="checkbox" checked={bingo} onChange={e => setBingo(e.target.checked)} />
+                Bingo +50
+              </label>
+            )}
+          </div>
+        )}
+
+        {letters.length > 0 && <div className="score-preview">{score} pts</div>}
+
+        {letters.length >= 2 && (
+          <div className="dict-status">
+            {inDict === null && <span className="dict-idle">Dictionary loading…</span>}
+            {inDict === true && <span className="dict-valid">✓ Valid word</span>}
+            {inDict === false && <span className="dict-invalid">✗ Not in dictionary</span>}
+          </div>
+        )}
+
+        {letters.length > 0 && (
+          <p className="tile-hint">Tap a tile to cycle: ×1 → DL → TL → Blank</p>
+        )}
+
+        <div className="modal-actions">
           <button onClick={onCancel} className="cancel-btn">Cancel</button>
-          <button onClick={handleSubmit} disabled={!allFilled} className="submit-btn">
-            {editingRound != null ? 'Save' : 'Add Round'}
-          </button>
+          {inDict === false ? (
+            <button onClick={() => submit(true)} className="submit-btn add-anyway">Add Anyway</button>
+          ) : (
+            <button onClick={() => submit()} disabled={!canAdd} className="submit-btn">
+              Add Turn
+            </button>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function Game({ players, onNewGame }) {
-  const [rounds, setRounds] = useState([]);
+// ── Game ───────────────────────────────────────────────────────────────────
+
+function Game({ players, wordSet, onNewGame }) {
+  const [turns, setTurns] = useState([]);
   const [entering, setEntering] = useState(false);
-  const [editingIdx, setEditingIdx] = useState(null);
   const [confirmReset, setConfirmReset] = useState(false);
 
-  const totals = players.map((_, pi) => rounds.reduce((sum, r) => sum + r[pi], 0));
+  const currentIdx = turns.length % players.length;
+  const totals = players.map((_, pi) =>
+    turns.filter(t => t.playerIdx === pi).reduce((sum, t) => sum + t.score, 0)
+  );
   const leader = totals.indexOf(Math.max(...totals));
 
-  const addRound = (scores) => {
-    setRounds(r => [...r, scores]);
+  const addTurn = (turn) => {
+    setTurns(t => [...t, { ...turn, playerIdx: currentIdx }]);
     setEntering(false);
   };
 
-  const editRound = (scores) => {
-    setRounds(r => r.map((row, i) => i === editingIdx ? scores : row));
-    setEditingIdx(null);
-  };
+  const passTurn = () => setTurns(t => [...t, { word: null, score: 0, playerIdx: currentIdx, pass: true }]);
 
-  const deleteRound = (idx) => {
-    setRounds(r => r.filter((_, i) => i !== idx));
-  };
+  const deleteTurn = (idx) => setTurns(t => t.filter((_, i) => i !== idx));
 
   return (
     <div className="game">
-      <div className="game-header">
-        <h1>Scrabble</h1>
+      <div className="player-cards-row">
+        {players.map((p, i) => (
+          <div
+            key={i}
+            className={`player-card ${i === currentIdx ? 'current' : ''} ${i === leader && turns.length > 0 ? 'leading' : ''}`}
+          >
+            <div className="pc-name">{p}{i === leader && turns.length > 0 ? ' 👑' : ''}</div>
+            <div className="pc-score">{totals[i]}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="turn-label">{players[currentIdx]}'s turn</div>
+
+      <div className="turn-history">
+        {turns.length === 0 && <p className="empty-hint">No plays yet — press Play Word to start!</p>}
+        {[...turns].reverse().map((turn, ri) => {
+          const idx = turns.length - 1 - ri;
+          return (
+            <div key={idx} className="turn-item">
+              <span className="turn-player-tag">{players[turn.playerIdx]}</span>
+              {turn.pass ? (
+                <span className="turn-word muted">passed</span>
+              ) : (
+                <>
+                  <span className="turn-word">{turn.word}</span>
+                  {!turn.dictValid && <span className="dict-warn" title="Not in dictionary">⚠</span>}
+                  {turn.bingo && <span className="bingo-tag">BINGO</span>}
+                </>
+              )}
+              <span className="turn-score">+{turn.score}</span>
+              <button className="delete-turn-btn" onClick={() => deleteTurn(idx)}>×</button>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="game-footer">
         <button className="new-game-btn" onClick={() => setConfirmReset(true)}>New Game</button>
+        <button className="pass-btn" onClick={passTurn}>Pass</button>
+        <button className="play-btn" onClick={() => setEntering(true)}>Play Word</button>
       </div>
 
-      <div className="scoreboard">
-        <table>
-          <thead>
-            <tr>
-              <th className="round-col">Round</th>
-              {players.map((p, i) => (
-                <th key={i} className={i === leader && rounds.length > 0 ? 'leading' : ''}>
-                  {p}
-                  {i === leader && rounds.length > 0 ? ' 👑' : ''}
-                </th>
-              ))}
-              <th className="action-col"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rounds.map((round, ri) => (
-              <tr key={ri} onClick={() => setEditingIdx(ri)} className="round-row">
-                <td className="round-col">{ri + 1}</td>
-                {round.map((score, pi) => (
-                  <td key={pi} className={score < 0 ? 'negative' : ''}>{score}</td>
-                ))}
-                <td className="action-col">
-                  <button className="delete-round-btn" onClick={e => { e.stopPropagation(); deleteRound(ri); }}>×</button>
-                </td>
-              </tr>
-            ))}
-            {rounds.length > 0 && (
-              <tr className="totals-row">
-                <td className="round-col">Total</td>
-                {totals.map((t, i) => (
-                  <td key={i} className={i === leader ? 'leading' : ''}>{t}</td>
-                ))}
-                <td className="action-col"></td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-
-        {rounds.length === 0 && (
-          <p className="empty-hint">No rounds yet — add the first one!</p>
-        )}
-      </div>
-
-      <button className="add-round-btn" onClick={() => setEntering(true)}>+ Add Round</button>
-
-      {(entering || editingIdx != null) && (
-        <ScoreInput
-          players={players}
-          onSubmit={editingIdx != null ? editRound : addRound}
-          onCancel={() => { setEntering(false); setEditingIdx(null); }}
-          editingRound={editingIdx}
+      {entering && (
+        <TurnEntry
+          playerName={players[currentIdx]}
+          wordSet={wordSet}
+          onAdd={addTurn}
+          onCancel={() => setEntering(false)}
         />
       )}
 
       {confirmReset && (
-        <div className="score-input-overlay">
-          <div className="score-input-card">
-            <h2>Start a new game?</h2>
-            <p>This will clear all scores.</p>
-            <div className="score-input-actions">
+        <div className="overlay">
+          <div className="modal">
+            <h2 className="modal-title">Start a new game?</h2>
+            <p className="modal-body">This will clear all scores.</p>
+            <div className="modal-actions">
               <button onClick={() => setConfirmReset(false)} className="cancel-btn">Cancel</button>
               <button onClick={onNewGame} className="submit-btn danger">New Game</button>
             </div>
@@ -186,9 +291,22 @@ function Game({ players, onNewGame }) {
   );
 }
 
+// ── Root ───────────────────────────────────────────────────────────────────
+
 export default function App() {
   const [players, setPlayers] = useState(null);
+  const [wordSet, setWordSet] = useState(null);
 
-  if (!players) return <Setup onStart={setPlayers} />;
-  return <Game players={players} onNewGame={() => setPlayers(null)} />;
+  useEffect(() => {
+    fetch('/words.txt')
+      .then(r => r.text())
+      .then(text => {
+        const set = new Set(text.split('\n').map(w => w.trim().toLowerCase()).filter(Boolean));
+        setWordSet(set);
+      })
+      .catch(() => setWordSet(new Set()));
+  }, []);
+
+  if (!players) return <Setup onStart={setPlayers} wordSetReady={wordSet !== null} />;
+  return <Game players={players} wordSet={wordSet} onNewGame={() => setPlayers(null)} />;
 }
