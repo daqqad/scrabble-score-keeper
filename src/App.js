@@ -29,11 +29,28 @@ function loadSave() {
   } catch { return null; }
 }
 
-function formatSaveDate(ts) {
+function generateId() {
+  return crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+}
+
+function formatDate(ts) {
   if (!ts) return '';
   const d = new Date(ts);
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
     ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+// ── Loading screen ─────────────────────────────────────────────────────────
+
+function LoadingScreen({ error }) {
+  return (
+    <div className="setup">
+      <h1>Scrabble Score Keeper</h1>
+      {error
+        ? <p className="load-error">{error}</p>
+        : <p className="dict-loading-hint">Loading game…</p>}
+    </div>
+  );
 }
 
 // ── Setup ──────────────────────────────────────────────────────────────────
@@ -58,7 +75,7 @@ function Setup({ onStart, onResume, savedGame, wordSetReady }) {
             <span className="resume-players">{savedGame.players.join(', ')}</span>
             <span className="resume-meta">
               {savedGame.turns?.length ?? 0} turns
-              {savedGame.savedAt ? ` · ${formatSaveDate(savedGame.savedAt)}` : ''}
+              {savedGame.savedAt ? ` · ${formatDate(savedGame.savedAt)}` : ''}
             </span>
           </div>
           <button className="resume-btn" onClick={onResume}>Resume</button>
@@ -102,7 +119,6 @@ function Tile({ letter, mult, onClick }) {
   const raw = LETTER_VALUES[letter.toUpperCase()] ?? 0;
   const multClass = mult === 0 ? 'tile-blank' : mult === 2 ? 'tile-dl' : mult === 3 ? 'tile-tl' : 'tile-normal';
   const badge = mult === 0 ? 'BL' : mult === 2 ? 'DL' : mult === 3 ? 'TL' : null;
-
   return (
     <button className={`tile ${multClass}`} onClick={onClick} title="Tap to cycle: ×1 → DL → TL → Blank">
       {badge && <span className="tile-badge">{badge}</span>}
@@ -145,20 +161,14 @@ function TurnEntry({ playerName, wordSet, onAdd, onCancel }) {
     <div className="overlay" onClick={e => e.target === e.currentTarget && onCancel()}>
       <div className="modal">
         <h2 className="modal-title">{playerName}'s turn</h2>
-
         <input
           className="word-input"
           type="text"
           placeholder="Type word played…"
           value={word}
           onChange={e => setWord(e.target.value.replace(/[^a-zA-Z]/g, ''))}
-          autoFocus
-          spellCheck={false}
-          autoComplete="off"
-          autoCorrect="off"
-          autoCapitalize="characters"
+          autoFocus spellCheck={false} autoComplete="off" autoCorrect="off" autoCapitalize="characters"
         />
-
         {letters.length > 0 && (
           <div className="tiles-row">
             {letters.map((ch, i) => (
@@ -166,7 +176,6 @@ function TurnEntry({ playerName, wordSet, onAdd, onCancel }) {
             ))}
           </div>
         )}
-
         {letters.length > 0 && (
           <div className="mult-controls">
             <div className="mult-group">
@@ -185,9 +194,7 @@ function TurnEntry({ playerName, wordSet, onAdd, onCancel }) {
             )}
           </div>
         )}
-
         {letters.length > 0 && <div className="score-preview">{score} pts</div>}
-
         {letters.length >= 2 && (
           <div className="dict-status">
             {inDict === null && <span className="dict-idle">Dictionary loading…</span>}
@@ -195,16 +202,51 @@ function TurnEntry({ playerName, wordSet, onAdd, onCancel }) {
             {inDict === false && <span className="dict-invalid">✗ Not in dictionary</span>}
           </div>
         )}
-
         {letters.length > 0 && <p className="tile-hint">Tap a tile to cycle: ×1 → DL → TL → Blank</p>}
-
         <div className="modal-actions">
           <button onClick={onCancel} className="cancel-btn">Cancel</button>
-          {inDict === false ? (
-            <button onClick={() => submit(true)} className="submit-btn add-anyway">Add Anyway</button>
-          ) : (
-            <button onClick={() => submit()} disabled={letters.length === 0} className="submit-btn">Add Turn</button>
-          )}
+          {inDict === false
+            ? <button onClick={() => submit(true)} className="submit-btn add-anyway">Add Anyway</button>
+            : <button onClick={() => submit()} disabled={letters.length === 0} className="submit-btn">Add Turn</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Share modal ────────────────────────────────────────────────────────────
+
+function ShareModal({ url, onClose }) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = () => {
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }).catch(() => {
+      // Fallback for browsers without clipboard API
+      const el = document.createElement('textarea');
+      el.value = url;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    });
+  };
+
+  return (
+    <div className="overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <h2 className="modal-title">Share Game</h2>
+        <p className="modal-body">Anyone with this link can open and continue the game on any device.</p>
+        <div className="share-url-box">{url}</div>
+        <div className="modal-actions">
+          <button onClick={onClose} className="cancel-btn">Done</button>
+          <button onClick={copy} className="submit-btn">
+            {copied ? '✓ Copied!' : 'Copy Link'}
+          </button>
         </div>
       </div>
     </div>
@@ -213,8 +255,10 @@ function TurnEntry({ playerName, wordSet, onAdd, onCancel }) {
 
 // ── Game ───────────────────────────────────────────────────────────────────
 
-function Game({ players, turns, setTurns, wordSet, onNewGame }) {
+function Game({ players, turns, setTurns, gameId, onShare, wordSet, onNewGame }) {
   const [entering, setEntering] = useState(false);
+  const [shareUrl, setShareUrl] = useState(null);
+  const [sharing, setSharing] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
 
   const currentIdx = turns.length % players.length;
@@ -227,10 +271,22 @@ function Game({ players, turns, setTurns, wordSet, onNewGame }) {
     setTurns(t => [...t, { ...turn, playerIdx: currentIdx }]);
     setEntering(false);
   };
-
   const passTurn = () => setTurns(t => [...t, { word: null, score: 0, playerIdx: currentIdx, pass: true }]);
-
   const deleteTurn = (idx) => setTurns(t => t.filter((_, i) => i !== idx));
+
+  const handleShare = async () => {
+    if (gameId) {
+      setShareUrl(`${window.location.origin}/?game=${gameId}`);
+      return;
+    }
+    setSharing(true);
+    try {
+      const url = await onShare();
+      setShareUrl(url);
+    } finally {
+      setSharing(false);
+    }
+  };
 
   return (
     <div className="game">
@@ -243,7 +299,10 @@ function Game({ players, turns, setTurns, wordSet, onNewGame }) {
         ))}
       </div>
 
-      <div className="turn-label">{players[currentIdx]}'s turn</div>
+      <div className="turn-label">
+        {players[currentIdx]}'s turn
+        {gameId && <span className="synced-badge" title="Auto-saving to cloud">☁</span>}
+      </div>
 
       <div className="turn-history">
         {turns.length === 0 && <p className="empty-hint">No plays yet — press Play Word to start!</p>}
@@ -252,15 +311,13 @@ function Game({ players, turns, setTurns, wordSet, onNewGame }) {
           return (
             <div key={idx} className="turn-item">
               <span className="turn-player-tag">{players[turn.playerIdx]}</span>
-              {turn.pass ? (
-                <span className="turn-word muted">passed</span>
-              ) : (
-                <>
-                  <span className="turn-word">{turn.word}</span>
-                  {!turn.dictValid && <span className="dict-warn" title="Not in dictionary">⚠</span>}
-                  {turn.bingo && <span className="bingo-tag">BINGO</span>}
-                </>
-              )}
+              {turn.pass
+                ? <span className="turn-word muted">passed</span>
+                : <>
+                    <span className="turn-word">{turn.word}</span>
+                    {!turn.dictValid && <span className="dict-warn" title="Not in dictionary">⚠</span>}
+                    {turn.bingo && <span className="bingo-tag">BINGO</span>}
+                  </>}
               <span className="turn-score">+{turn.score}</span>
               <button className="delete-turn-btn" onClick={() => deleteTurn(idx)}>×</button>
             </div>
@@ -271,12 +328,17 @@ function Game({ players, turns, setTurns, wordSet, onNewGame }) {
       <div className="game-footer">
         <button className="new-game-btn" onClick={() => setConfirmReset(true)}>New Game</button>
         <button className="pass-btn" onClick={passTurn}>Pass</button>
+        <button className="share-btn" onClick={handleShare} disabled={sharing}>
+          {sharing ? '…' : '🔗 Share'}
+        </button>
         <button className="play-btn" onClick={() => setEntering(true)}>Play Word</button>
       </div>
 
       {entering && (
         <TurnEntry playerName={players[currentIdx]} wordSet={wordSet} onAdd={addTurn} onCancel={() => setEntering(false)} />
       )}
+
+      {shareUrl && <ShareModal url={shareUrl} onClose={() => setShareUrl(null)} />}
 
       {confirmReset && (
         <div className="overlay">
@@ -297,12 +359,36 @@ function Game({ players, turns, setTurns, wordSet, onNewGame }) {
 // ── Root ───────────────────────────────────────────────────────────────────
 
 export default function App() {
+  const [screen, setScreen] = useState('init'); // init | setup | playing
+  const [loadError, setLoadError] = useState(null);
   const [players, setPlayers] = useState(null);
   const [turns, setTurns] = useState([]);
+  const [gameId, setGameId] = useState(null);
   const [wordSet, setWordSet] = useState(null);
   const [savedGame, setSavedGame] = useState(() => loadSave());
 
-  // Auto-save whenever game state changes
+  // On mount: check for ?game= param and load from KV if present
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('game');
+    if (!id) { setScreen('setup'); return; }
+
+    fetch(`/api/game/${id}`)
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+      .then(data => {
+        setPlayers(data.players);
+        setTurns(data.turns ?? []);
+        setGameId(id);
+        setScreen('playing');
+      })
+      .catch(() => {
+        setLoadError('Game link not found or expired. Start a new game below.');
+        window.history.replaceState(null, '', window.location.pathname);
+        setScreen('setup');
+      });
+  }, []);
+
+  // Auto-save to localStorage whenever game state changes
   useEffect(() => {
     if (!players) return;
     const save = { players, turns, savedAt: Date.now() };
@@ -310,28 +396,53 @@ export default function App() {
     setSavedGame(save);
   }, [players, turns]);
 
+  // Auto-sync to KV on every turn when a game link exists
+  useEffect(() => {
+    if (!players || !gameId) return;
+    fetch('/api/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: gameId, players, turns }),
+    }).catch(() => {});
+  }, [turns, gameId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Load word list once
   useEffect(() => {
     fetch('/words.txt')
       .then(r => r.text())
-      .then(text => {
-        const set = new Set(text.split('\n').map(w => w.trim().toLowerCase()).filter(Boolean));
-        setWordSet(set);
-      })
+      .then(text => setWordSet(new Set(text.split('\n').map(w => w.trim().toLowerCase()).filter(Boolean))))
       .catch(() => setWordSet(new Set()));
   }, []);
 
   const startGame = (playerNames) => {
     setPlayers(playerNames);
     setTurns([]);
+    setGameId(null);
+    window.history.replaceState(null, '', window.location.pathname);
+    setScreen('playing');
   };
 
-  const resumeGame = () => {
+  const resumeLocal = () => {
     const save = loadSave();
-    if (save) {
-      setPlayers(save.players);
-      setTurns(save.turns ?? []);
-    }
+    if (!save) return;
+    setPlayers(save.players);
+    setTurns(save.turns ?? []);
+    setGameId(null);
+    setScreen('playing');
+  };
+
+  // Called by Game when Share is tapped for the first time (no gameId yet)
+  const createShare = async () => {
+    const id = generateId();
+    await fetch('/api/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, players, turns }),
+    });
+    setGameId(id);
+    const url = `${window.location.origin}/?game=${id}`;
+    window.history.replaceState(null, '', `?game=${id}`);
+    return url;
   };
 
   const endGame = () => {
@@ -339,10 +450,32 @@ export default function App() {
     setSavedGame(null);
     setPlayers(null);
     setTurns([]);
+    setGameId(null);
+    window.history.replaceState(null, '', window.location.pathname);
+    setScreen('setup');
   };
 
-  if (!players) {
-    return <Setup onStart={startGame} onResume={resumeGame} savedGame={savedGame} wordSetReady={wordSet !== null} />;
+  if (screen === 'init') return <LoadingScreen />;
+  if (screen === 'setup') {
+    return (
+      <Setup
+        onStart={startGame}
+        onResume={resumeLocal}
+        savedGame={savedGame}
+        wordSetReady={wordSet !== null}
+        loadError={loadError}
+      />
+    );
   }
-  return <Game players={players} turns={turns} setTurns={setTurns} wordSet={wordSet} onNewGame={endGame} />;
+  return (
+    <Game
+      players={players}
+      turns={turns}
+      setTurns={setTurns}
+      gameId={gameId}
+      onShare={createShare}
+      wordSet={wordSet}
+      onNewGame={endGame}
+    />
+  );
 }
