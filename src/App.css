@@ -107,6 +107,72 @@ body {
   margin-top: 0.75rem;
 }
 
+.resume-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  background: rgba(232,200,64,0.12);
+  border: 2px solid rgba(232,200,64,0.4);
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+  width: 100%;
+  max-width: 340px;
+  margin-bottom: 1.25rem;
+}
+
+.resume-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.resume-label {
+  color: #e8c840;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.resume-players {
+  color: #f5e6c8;
+  font-size: 0.95rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.resume-meta {
+  color: rgba(245,230,200,0.5);
+  font-size: 0.75rem;
+}
+
+.resume-btn {
+  background: #e8c840;
+  color: #1a472a;
+  border: none;
+  border-radius: 7px;
+  padding: 0.55rem 1.1rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.resume-btn:hover { background: #f0d44a; }
+
+.setup-section-label {
+  color: rgba(245,230,200,0.6);
+  font-size: 0.8rem;
+  margin: 0 0 0.75rem;
+  align-self: flex-start;
+  max-width: 340px;
+  width: 100%;
+}
+
 /* ── Game layout ────────────────────────────────────────────────────── */
 
 .game {

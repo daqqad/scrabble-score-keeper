@@ -2,13 +2,13 @@ import { useState, useEffect } from 'react';
 import './App.css';
 
 const MAX_PLAYERS = 6;
+const SAVE_KEY = 'scrabble-game';
 
 const LETTER_VALUES = {
   A:1,B:3,C:3,D:2,E:1,F:4,G:2,H:4,I:1,J:8,K:5,L:1,M:3,
   N:1,O:1,P:3,Q:10,R:1,S:1,T:1,U:1,V:4,W:4,X:8,Y:4,Z:10,
 };
 
-// mult: 1=normal, 2=DL, 3=TL, 0=blank
 function nextMult(m) { return m === 1 ? 2 : m === 2 ? 3 : m === 3 ? 0 : 1; }
 
 function letterScore(ch, mult) {
@@ -22,9 +22,23 @@ function calcScore(word, mults, wordMult, bingo) {
   return base * wordMult + (bingo ? 50 : 0);
 }
 
+function loadSave() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function formatSaveDate(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
+    ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
 // ── Setup ──────────────────────────────────────────────────────────────────
 
-function Setup({ onStart, wordSetReady }) {
+function Setup({ onStart, onResume, savedGame, wordSetReady }) {
   const [names, setNames] = useState(['', '']);
 
   const setName = (i, val) => setNames(n => n.map((x, j) => j === i ? val : x));
@@ -36,6 +50,23 @@ function Setup({ onStart, wordSetReady }) {
   return (
     <div className="setup">
       <h1>Scrabble Score Keeper</h1>
+
+      {savedGame && (
+        <div className="resume-card">
+          <div className="resume-info">
+            <span className="resume-label">Saved game</span>
+            <span className="resume-players">{savedGame.players.join(', ')}</span>
+            <span className="resume-meta">
+              {savedGame.turns?.length ?? 0} turns
+              {savedGame.savedAt ? ` · ${formatSaveDate(savedGame.savedAt)}` : ''}
+            </span>
+          </div>
+          <button className="resume-btn" onClick={onResume}>Resume</button>
+        </div>
+      )}
+
+      <p className="setup-section-label">{savedGame ? 'Or start a new game:' : 'Enter player names:'}</p>
+
       <div className="player-inputs">
         {names.map((name, i) => (
           <div key={i} className="player-row">
@@ -46,7 +77,7 @@ function Setup({ onStart, wordSetReady }) {
               onChange={e => setName(i, e.target.value)}
               onKeyDown={e => e.key === 'Enter' && valid && onStart(names.map(n => n.trim()))}
               maxLength={20}
-              autoFocus={i === 0}
+              autoFocus={i === 0 && !savedGame}
             />
             {names.length > 2 && (
               <button className="remove-btn" onClick={() => removePlayer(i)}>×</button>
@@ -103,22 +134,11 @@ function TurnEntry({ playerName, wordSet, onAdd, onCancel }) {
 
   const useBingo = bingo && letters.length >= 7;
   const score = letters.length > 0 ? calcScore(letters.join(''), mults, wordMult, useBingo) : 0;
-
   const inDict = wordSet ? wordSet.has(letters.join('').toLowerCase()) : null;
-  // inDict: true=valid, false=not found, null=not ready
-
-  const canAdd = letters.length >= 1;
 
   const submit = (force = false) => {
-    if (!canAdd) return;
-    onAdd({
-      word: letters.join(''),
-      mults: [...mults],
-      wordMult,
-      bingo: useBingo,
-      score,
-      dictValid: inDict === true || force,
-    });
+    if (letters.length === 0) return;
+    onAdd({ word: letters.join(''), mults: [...mults], wordMult, bingo: useBingo, score, dictValid: inDict === true || force });
   };
 
   return (
@@ -152,11 +172,7 @@ function TurnEntry({ playerName, wordSet, onAdd, onCancel }) {
             <div className="mult-group">
               <span className="mult-label">Word:</span>
               {[1, 2, 3].map(m => (
-                <button
-                  key={m}
-                  className={`word-mult-btn ${wordMult === m ? 'active' : ''}`}
-                  onClick={() => setWordMult(m)}
-                >
+                <button key={m} className={`word-mult-btn ${wordMult === m ? 'active' : ''}`} onClick={() => setWordMult(m)}>
                   {m === 1 ? '×1' : m === 2 ? 'DW' : 'TW'}
                 </button>
               ))}
@@ -180,18 +196,14 @@ function TurnEntry({ playerName, wordSet, onAdd, onCancel }) {
           </div>
         )}
 
-        {letters.length > 0 && (
-          <p className="tile-hint">Tap a tile to cycle: ×1 → DL → TL → Blank</p>
-        )}
+        {letters.length > 0 && <p className="tile-hint">Tap a tile to cycle: ×1 → DL → TL → Blank</p>}
 
         <div className="modal-actions">
           <button onClick={onCancel} className="cancel-btn">Cancel</button>
           {inDict === false ? (
             <button onClick={() => submit(true)} className="submit-btn add-anyway">Add Anyway</button>
           ) : (
-            <button onClick={() => submit()} disabled={!canAdd} className="submit-btn">
-              Add Turn
-            </button>
+            <button onClick={() => submit()} disabled={letters.length === 0} className="submit-btn">Add Turn</button>
           )}
         </div>
       </div>
@@ -201,8 +213,7 @@ function TurnEntry({ playerName, wordSet, onAdd, onCancel }) {
 
 // ── Game ───────────────────────────────────────────────────────────────────
 
-function Game({ players, wordSet, onNewGame }) {
-  const [turns, setTurns] = useState([]);
+function Game({ players, turns, setTurns, wordSet, onNewGame }) {
   const [entering, setEntering] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
 
@@ -225,10 +236,7 @@ function Game({ players, wordSet, onNewGame }) {
     <div className="game">
       <div className="player-cards-row">
         {players.map((p, i) => (
-          <div
-            key={i}
-            className={`player-card ${i === currentIdx ? 'current' : ''} ${i === leader && turns.length > 0 ? 'leading' : ''}`}
-          >
+          <div key={i} className={`player-card ${i === currentIdx ? 'current' : ''} ${i === leader && turns.length > 0 ? 'leading' : ''}`}>
             <div className="pc-name">{p}{i === leader && turns.length > 0 ? ' 👑' : ''}</div>
             <div className="pc-score">{totals[i]}</div>
           </div>
@@ -267,12 +275,7 @@ function Game({ players, wordSet, onNewGame }) {
       </div>
 
       {entering && (
-        <TurnEntry
-          playerName={players[currentIdx]}
-          wordSet={wordSet}
-          onAdd={addTurn}
-          onCancel={() => setEntering(false)}
-        />
+        <TurnEntry playerName={players[currentIdx]} wordSet={wordSet} onAdd={addTurn} onCancel={() => setEntering(false)} />
       )}
 
       {confirmReset && (
@@ -295,8 +298,19 @@ function Game({ players, wordSet, onNewGame }) {
 
 export default function App() {
   const [players, setPlayers] = useState(null);
+  const [turns, setTurns] = useState([]);
   const [wordSet, setWordSet] = useState(null);
+  const [savedGame, setSavedGame] = useState(() => loadSave());
 
+  // Auto-save whenever game state changes
+  useEffect(() => {
+    if (!players) return;
+    const save = { players, turns, savedAt: Date.now() };
+    localStorage.setItem(SAVE_KEY, JSON.stringify(save));
+    setSavedGame(save);
+  }, [players, turns]);
+
+  // Load word list once
   useEffect(() => {
     fetch('/words.txt')
       .then(r => r.text())
@@ -307,6 +321,28 @@ export default function App() {
       .catch(() => setWordSet(new Set()));
   }, []);
 
-  if (!players) return <Setup onStart={setPlayers} wordSetReady={wordSet !== null} />;
-  return <Game players={players} wordSet={wordSet} onNewGame={() => setPlayers(null)} />;
+  const startGame = (playerNames) => {
+    setPlayers(playerNames);
+    setTurns([]);
+  };
+
+  const resumeGame = () => {
+    const save = loadSave();
+    if (save) {
+      setPlayers(save.players);
+      setTurns(save.turns ?? []);
+    }
+  };
+
+  const endGame = () => {
+    localStorage.removeItem(SAVE_KEY);
+    setSavedGame(null);
+    setPlayers(null);
+    setTurns([]);
+  };
+
+  if (!players) {
+    return <Setup onStart={startGame} onResume={resumeGame} savedGame={savedGame} wordSetReady={wordSet !== null} />;
+  }
+  return <Game players={players} turns={turns} setTurns={setTurns} wordSet={wordSet} onNewGame={endGame} />;
 }
