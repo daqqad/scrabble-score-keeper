@@ -176,9 +176,9 @@ body {
   color: rgba(245,230,200,0.6);
   font-size: 0.8rem;
   margin: 0 0 0.75rem;
-  align-self: flex-start;
-  max-width: 340px;
+  text-align: center;
   width: 100%;
+  max-width: 340px;
 }
 
 .resume-card {
@@ -237,15 +237,6 @@ body {
 }
 
 .resume-btn:hover { background: #f0d44a; }
-
-.setup-section-label {
-  color: rgba(245,230,200,0.6);
-  font-size: 0.8rem;
-  margin: 0 0 0.75rem;
-  align-self: flex-start;
-  max-width: 340px;
-  width: 100%;
-}
 
 /* ── Game layout ────────────────────────────────────────────────────── */
 
